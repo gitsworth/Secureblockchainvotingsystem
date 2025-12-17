@@ -10,7 +10,7 @@ from io import StringIO
 # --- Configuration and Constants ---
 MAX_CANDIDATES = 10
 MAX_VOTERS = 100
-ADMIN_PASSWORD = "host123" # Simple admin password for demo purposes
+# ADMIN_PASSWORD constant removed as per user request.
 
 # --- Core Blockchain and Data Classes ---
 
@@ -163,21 +163,19 @@ def init_session_state():
 # --- Tab View Functions ---
 
 def host_login_tab():
-    """Handles Host (Admin) authentication."""
-    st.title("Host Portal Access")
+    """Handles Host (Admin) authentication (now password-less)."""
+    st.title("Host Portal Access (Password-less)")
+    
     if st.session_state.admin_login_success:
         st.success("Access Granted. Use the sidebar to navigate Host tabs.")
         return
 
-    password = st.text_input("Enter Host Password:", type="password")
-    if st.button("Login"):
-        if password == ADMIN_PASSWORD:
-            st.session_state.is_admin = True
-            st.session_state.admin_login_success = True
-            st.success("Login successful! Welcome, Host.")
-            st.experimental_rerun()
-        else:
-            st.error("Invalid Host Password. Access denied.")
+    st.markdown("Click the button below to gain Host (Admin) access.")
+    if st.button("Grant Host Access"):
+        st.session_state.is_admin = True
+        st.session_state.admin_login_success = True
+        st.success("Access granted! Welcome, Host.")
+        st.experimental_rerun()
 
 def host_management_tab():
     """Host: Management (Start/End Vote, Candidates CRUD)."""
