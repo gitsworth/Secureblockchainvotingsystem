@@ -18,32 +18,18 @@ HOST_PRIVATE_KEY = "c8b4b74581f1d19d7e5d263a568c078864d2d4808386375354972e25d25e
 DB_PATH = 'voters.csv' 
 BLOCKCHAIN_PATH = 'blockchain_data.json'
 
-@st.cache_resource
-def initialize_system():
-    voters_df_init = load_voters(DB_PATH)
-    try:
-        bc = Blockchain(HOST_PUBLIC_KEY, HOST_PRIVATE_KEY, BLOCKCHAIN_PATH)
-        return voters_df_init, bc
-    except Exception as e:
-        st.error(f"Error initializing Blockchain: {e}")
-        st.stop()
-
+# --- INITIALIZATION ---
 if 'blockchain' not in st.session_state:
-    voters_df_init, bc = initialize_system()
-    st.session_state.voters_df = voters_df_init
-    st.session_state.blockchain = bc
+    st.session_state.voters_df = load_voters(DB_PATH)
+    st.session_state.blockchain = Blockchain(HOST_PUBLIC_KEY, HOST_PRIVATE_KEY, BLOCKCHAIN_PATH)
     
-blockchain = st.session_state.blockchain
-
-# --- ELECTION STATE MANAGEMENT ---
-if 'registration_open' not in st.session_state:
+    # Election State
     st.session_state.registration_open = True
-if 'voting_open' not in st.session_state:
     st.session_state.voting_open = False
-if 'election_ended' not in st.session_state:
     st.session_state.election_ended = False
-if 'candidates' not in st.session_state:
     st.session_state.candidates = ["Candidate A", "Candidate B"]
+
+blockchain = st.session_state.blockchain
 
 # --- HELPER FUNCTIONS ---
 def get_total_votes(candidates):
@@ -55,57 +41,50 @@ def get_total_votes(candidates):
                 results[vote_candidate] += 1
     return results
 
-def get_voter_info(public_key):
-    voters_df = st.session_state.voters_df
-    return voters_df[voters_df['public_key'].astype(str) == str(public_key)]
-
-# --- MAIN APP LAYOUT ---
+# --- APP LAYOUT ---
 st.set_page_config(layout="wide", page_title="Secure Blockchain Voting System")
 
 st.markdown("""
     <style>
-    .big-font { font-size:25px !important; font-weight: bold; color: #1E40AF; }
-    .status-box { padding: 10px; border-radius: 5px; margin-bottom: 10px; text-align: center; font-weight: bold; }
+    .header-font { font-size:30px !important; font-weight: bold; color: #1E40AF; border-bottom: 2px solid #60A5FA; }
+    .stButton>button { border-radius: 8px; font-weight: 700; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🛡️ Secure Blockchain Voting System")
 
-# Create the Tabs
 tab_reg, tab_voter, tab_results, tab_host, tab_ledger = st.tabs([
-    "📝 Voter Registration",
+    "📝 Voter Registration", 
     "🗳️ Voter Portal", 
-    "📊 Election Results",
+    "📊 Election Results", 
     "⚙️ Host Portal", 
-    "🔗 Blockchain Ledger"
+    "🔗 Ledger"
 ])
 
 # ==============================================================================
 # 1. VOTER REGISTRATION
 # ==============================================================================
 with tab_reg:
-    st.markdown("<p class='big-font'>Voter Registration</p>", unsafe_allow_html=True)
+    st.markdown("<p class='header-font'>Voter Registration</p>", unsafe_allow_html=True)
     
     if st.session_state.registration_open:
-        with st.form("voter_registration_form"):
+        with st.form("registration_form"):
             new_name = st.text_input("Full Name")
             dob = st.date_input("Date of Birth", min_value=date(1920, 1, 1), max_value=date.today())
-            age = st.number_input("Enter Age", min_value=0, max_value=120, step=1)
+            age = st.number_input("Current Age", min_value=0, max_value=120, step=1)
             
-            submitted = st.form_submit_button("Register & Generate Credentials")
-            
-            if submitted:
+            if st.form_submit_button("Register & Generate Wallet"):
                 voters_df = st.session_state.voters_df
-                # Check duplication: Name + DOB
-                duplicate = voters_df[(voters_df['name'].str.lower() == new_name.lower()) & 
-                                     (voters_df['dob'] == str(dob))]
+                # Duplicate Check (Name + DOB)
+                is_duplicate = not voters_df[(voters_df['name'].str.lower() == new_name.lower()) & 
+                                            (voters_df['dob'] == str(dob))].empty
                 
                 if not new_name:
-                    st.error("Please enter your name.")
+                    st.error("Name is required.")
                 elif age < 18:
-                    st.error("Registration denied: You must be 18 or older to vote.")
-                elif not duplicate.empty:
-                    st.warning("This person (Name and Date of Birth) is already registered.")
+                    st.error("Access Denied: You must be at least 18 years old to register.")
+                elif is_duplicate:
+                    st.warning("This person is already registered in the system.")
                 else:
                     private_key, public_key = generate_key_pair()
                     new_voter = pd.DataFrame([{
@@ -118,132 +97,128 @@ with tab_reg:
                         'has_voted': False,
                         'registration_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }])
-                    
                     st.session_state.voters_df = pd.concat([voters_df, new_voter], ignore_index=True)
                     save_voters(st.session_state.voters_df, DB_PATH)
                     
-                    st.success(f"Successfully Registered, {new_name}!")
-                    st.info("⚠️ COPY THESE KEYS NOW. You will need them to vote. They will not be shown again.")
-                    st.code(f"Public Key (ID): {public_key}")
+                    st.success(f"Successfully registered {new_name}!")
+                    st.warning("⚠️ COPY YOUR KEYS NOW. You cannot retrieve them later.")
+                    st.code(f"Public Key (Voter ID): {public_key}")
                     st.code(f"Private Key (Secret): {private_key}")
     else:
-        st.info("Registration is currently closed by the Host.")
+        st.info("Registration is currently closed.")
 
 # ==============================================================================
 # 2. VOTER PORTAL
 # ==============================================================================
 with tab_voter:
-    st.markdown("<p class='big-font'>Cast Your Secure Vote</p>", unsafe_allow_html=True)
+    st.markdown("<p class='header-font'>Voter Portal</p>", unsafe_allow_html=True)
     
     if st.session_state.voting_open:
-        with st.form("vote_casting"):
-            v_name = st.text_input("Registered Name")
+        with st.form("voting_form"):
+            v_name = st.text_input("Registered Full Name")
             v_id = st.text_input("Public Key (Voter ID)")
-            s_key = st.text_input("Private Key (Secret Key)", type="password")
-            candidate = st.selectbox("Select Candidate:", st.session_state.candidates)
+            v_key = st.text_input("Private Key", type="password")
+            candidate = st.selectbox("Choose Candidate", st.session_state.candidates)
             
-            if st.form_submit_button("Cast Vote Securely"):
-                voter_row = get_voter_info(v_id)
+            if st.form_submit_button("Submit Secure Vote"):
+                voters_df = st.session_state.voters_df
+                voter_row = voters_df[voters_df['public_key'] == v_id]
                 
                 if voter_row.empty:
                     st.error("Invalid Voter ID.")
                 else:
                     v_info = voter_row.iloc[0]
                     if v_info['name'].lower() != v_name.lower():
-                        st.error("Name does not match our records for this ID.")
+                        st.error("Verification failed: Name does not match ID.")
                     elif v_info['has_voted']:
-                        st.warning("This ID has already cast a vote.")
-                    elif str(v_info['private_key']) != str(s_key):
-                        st.error("Incorrect Private Key.")
+                        st.warning("You have already cast your vote.")
+                    elif str(v_info['private_key']) != str(v_key):
+                        st.error("Authentication failed: Incorrect Private Key.")
                     else:
-                        data_to_sign = f"VOTE|{v_id}|{candidate}|{datetime.now().isoformat()}"
-                        signature = sign_transaction(s_key, data_to_sign)
+                        # Logic to sign and add to blockchain
+                        data = f"{v_id}|{candidate}|{time.time()}"
+                        signature = sign_transaction(v_key, data)
                         
-                        if signature and verify_signature(v_id, data_to_sign, signature):
+                        if signature and verify_signature(v_id, data, signature):
                             blockchain.new_transaction(v_id, candidate, "Vote Cast")
                             blockchain.new_block()
-                            if update_voter_status(st.session_state.voters_df, v_id):
-                                save_voters(st.session_state.voters_df, DB_PATH)
-                                st.success(f"Vote cast successfully for {candidate}!")
-                                st.rerun()
+                            update_voter_status(st.session_state.voters_df, v_id)
+                            save_voters(st.session_state.voters_df, DB_PATH)
+                            st.success("Vote recorded successfully on the blockchain!")
+                            st.rerun()
     else:
-        st.warning("Voting is currently closed.")
+        st.warning("The voting window is currently closed.")
 
 # ==============================================================================
 # 3. ELECTION RESULTS
 # ==============================================================================
 with tab_results:
-    st.markdown("<p class='big-font'>Election Results</p>", unsafe_allow_html=True)
+    st.markdown("<p class='header-font'>Election Results</p>", unsafe_allow_html=True)
     
     if st.session_state.election_ended:
         results = get_total_votes(st.session_state.candidates)
-        total_votes = sum(results.values())
+        total = sum(results.values())
+        st.success(f"Final Count: {total} votes cast.")
         
-        st.success("THE ELECTION HAS CONCLUDED. FINAL RESULTS:")
-        st.metric("Total Votes Counted", total_votes)
-        
-        if total_votes > 0:
-            res_df = pd.DataFrame(list(results.items()), columns=['Candidate', 'Votes'])
-            st.bar_chart(res_df.set_index('Candidate'))
-            st.table(res_df)
-        else:
-            st.info("No votes were cast in this election.")
+        res_df = pd.DataFrame(list(results.items()), columns=['Candidate', 'Votes'])
+        st.bar_chart(res_df.set_index('Candidate'))
+        st.table(res_df)
     else:
-        st.info("🔒 Results are hidden until the election has ended to ensure fairness.")
+        st.info("🔒 Results are currently hidden. They will be revealed once the Host ends the election.")
 
 # ==============================================================================
 # 4. HOST PORTAL
 # ==============================================================================
 with tab_host:
-    st.markdown("<p class='big-font'>Host Authority Management</p>", unsafe_allow_html=True)
+    st.markdown("<p class='header-font'>Host Authority Management</p>", unsafe_allow_html=True)
     
-    st.subheader("Manage Candidates")
+    # Candidate Setup
+    st.subheader("1. Candidate Management")
     if not st.session_state.voting_open and not st.session_state.election_ended:
-        can_input = st.text_area("Update Candidate List (One per line)", value="\n".join(st.session_state.candidates))
-        if st.button("Save Candidates"):
-            new_list = [c.strip() for c in can_input.split('\n') if c.strip()]
-            if len(new_list) != len(set(new_list)):
-                st.error("Duplicate candidate names are not allowed.")
-            elif not new_list:
-                st.error("Candidate list cannot be empty.")
+        c_input = st.text_area("Candidate List (One per line)", value="\n".join(st.session_state.candidates))
+        if st.button("Update Candidates"):
+            raw_list = [c.strip() for c in c_input.split('\n') if c.strip()]
+            if len(raw_list) != len(set(raw_list)):
+                st.error("Error: Duplicate candidate names detected.")
+            elif not raw_list:
+                st.error("Error: Candidate list cannot be empty.")
             else:
-                st.session_state.candidates = new_list
-                st.success("Candidate list updated.")
+                st.session_state.candidates = raw_list
+                st.success("Candidate list updated successfully.")
     else:
-        st.warning("Candidate list is LOCKED because voting has started/ended.")
-        st.write("Current Candidates:", st.session_state.candidates)
+        st.warning("Candidate management is locked while voting is active or ended.")
 
-    st.markdown("---")
-    st.subheader("Election Control")
+    # Election Status
+    st.subheader("2. Election Controls")
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("Start Voting (Close Registration)"):
+        if st.button("Start Voting (Closes Registration)"):
             st.session_state.registration_open = False
             st.session_state.voting_open = True
             st.rerun()
     with c2:
-        if st.button("End Voting (Show Results)"):
+        if st.button("End Voting (Reveals Results)"):
             st.session_state.voting_open = False
             st.session_state.election_ended = True
             st.rerun()
     with c3:
-        if st.button("Reset System"):
+        if st.button("Reset Election System"):
             blockchain.reset_chain()
             st.session_state.voters_df = pd.DataFrame(columns=['id','name','dob','age','public_key','private_key','has_voted','registration_date'])
             save_voters(st.session_state.voters_df, DB_PATH)
-            st.session_state.registration_open = True
-            st.session_state.voting_open = False
-            st.session_state.election_ended = False
+            st.session_state.registration_open, st.session_state.voting_open, st.session_state.election_ended = True, False, False
             st.rerun()
 
-    st.subheader("Registered Voters Log")
-    st.dataframe(st.session_state.voters_df[['name', 'dob', 'age', 'has_voted']])
+    # Voter Base Table
+    st.subheader("3. Registered Voter Database (Admin View)")
+    # Added 'public_key' and 'private_key' to the displayed columns as requested
+    st.dataframe(st.session_state.voters_df[['name', 'dob', 'age', 'public_key', 'private_key', 'has_voted']], use_container_width=True)
 
 # ==============================================================================
-# 5. LEDGER
+# 5. BLOCKCHAIN LEDGER
 # ==============================================================================
 with tab_ledger:
-    st.markdown("<p class='big-font'>Blockchain Ledger</p>", unsafe_allow_html=True)
+    st.markdown("<p class='header-font'>Blockchain Ledger</p>", unsafe_allow_html=True)
     for block in reversed(blockchain.chain):
-        with st.expander(f"Block #{block.index} - Hash: {block.hash[:15]}..."):
+        with st.expander(f"Block #{block.index} [Hash: {block.hash[:15]}...]"):
             st.json(block.to_dict())
