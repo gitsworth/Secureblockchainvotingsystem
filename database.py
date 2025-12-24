@@ -1,29 +1,13 @@
 import pandas as pd
 import os
 
-def load_voters(db_path):
-    if os.path.exists(db_path):
-        try:
-            df = pd.read_csv(db_path)
-            # Ensure columns are treated as strings
-            df['public_key'] = df['public_key'].astype(str)
-            return df
-        except:
-            return initialize_voters_df()
-    return initialize_voters_df()
+def load_voters(file_path):
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path)
+    return pd.DataFrame(columns=['name', 'dob', 'age', 'public_key', 'has_voted'])
 
-def initialize_voters_df():
-    # Private Key is EXCLUDED from storage for security
-    return pd.DataFrame(columns=[
-        'name', 'dob', 'age', 'public_key', 'has_voted'
-    ])
-
-def save_voters(df, db_path):
-    df.to_csv(db_path, index=False)
+def save_voters(df, file_path):
+    df.to_csv(file_path, index=False)
 
 def update_voter_status(df, public_key):
-    mask = df['public_key'].astype(str) == str(public_key)
-    if mask.any():
-        df.loc[mask, 'has_voted'] = True
-        return True
-    return False
+    df.loc[df['public_key'] == public_key, 'has_voted'] = True
