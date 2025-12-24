@@ -62,6 +62,8 @@ def show_results():
     st.header("📊 Election Results")
     if config_data.get("ended"):
         results_tally = {c: 0 for c in config_data["candidates"]}
+        # Always ensure the chain is fresh
+        st.session_state.blockchain.load_chain()
         for block in st.session_state.blockchain.chain[1:]:
             for tx in block.transactions:
                 cand = tx.get('candidate')
@@ -118,7 +120,7 @@ if current_page == "host":
                 st.session_state.blockchain.reset_chain()
                 st.session_state.voters_df = pd.DataFrame(columns=['name', 'dob', 'age', 'public_key', 'has_voted'])
                 save_voters(st.session_state.voters_df, DB_PATH)
-                save_config({"reg_open": True, "vote_open": False, "ended": False, "candidates": ["A", "B"]})
+                save_config({"reg_open": True, "vote_open": False, "ended": False, "candidates": ["Candidate A", "Candidate B"]})
                 st.rerun()
 
             st.divider()
@@ -194,5 +196,6 @@ else: # Voter Portal
         else:
             st.info("🕒 Voting has not started yet. Please register.")
 
-    with tab_res: show_results()
-    with tab_ledg: show_ledger()
+    # Fixed the variable names here to match the Voter Portal tabs (t_res, t_ledg)
+    with t_res: show_results()
+    with t_ledg: show_ledger()
