@@ -33,14 +33,13 @@ class Blockchain:
         else:
             self.create_genesis_block()
 
-    def create_genesis_block(self):
-        genesis_block = Block(0, time.time(), "0", [{"message": "Genesis Block"}])
-        self.chain.append(genesis_block)
-        self.save_chain()
-
     def new_transaction(self, voter_id, candidate):
+        # PRIVACY UPGRADE: We hash the voter_id one more time before storing
+        # This creates a "Pseudonym" so the Host cannot easily link it back to the CSV
+        masked_id = hashlib.sha256(voter_id.encode()).hexdigest()
+        
         self.pending_transactions.append({
-            'voter_id': voter_id,
+            'masked_voter_id': masked_id,
             'candidate': candidate,
             'timestamp': time.time()
         })
