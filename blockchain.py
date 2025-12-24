@@ -21,7 +21,13 @@ class Block:
         return hashlib.sha256(content).hexdigest()
 
     def to_dict(self):
-        return self.__dict__
+        return {
+            'index': self.index,
+            'timestamp': self.timestamp,
+            'transactions': self.transactions,
+            'previous_hash': self.previous_hash,
+            'hash': self.hash
+        }
 
 class Blockchain:
     def __init__(self, filename='blockchain_data.json'):
@@ -32,6 +38,11 @@ class Blockchain:
             self.load_chain()
         else:
             self.create_genesis_block()
+
+    def create_genesis_block(self):
+        genesis_block = Block(0, time.time(), "0", [])
+        self.chain.append(genesis_block)
+        self.save_chain()
 
     def new_transaction(self, voter_id, candidate):
         # PRIVACY UPGRADE: We hash the voter_id one more time before storing
