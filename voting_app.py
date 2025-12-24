@@ -34,6 +34,7 @@ with tab_reg:
     if st.session_state.reg_open:
         with st.form("reg_form"):
             name = st.text_input("Full Name")
+            # Set min_value to 1920 to fix the calendar year issue
             dob = st.date_input("Date of Birth", min_value=date(1920,1,1), max_value=date.today())
             
             # Auto-calculate age
@@ -63,7 +64,6 @@ with tab_reg:
                     st.success("Registration Successful!")
                     st.subheader("Your Secret Credentials")
                     st.warning("⚠️ IMPORTANT: Copy your Private Key now. It is your ONLY way to authorize your vote. It is NOT stored in our database.")
-                    # Public key is hidden here as requested
                     st.code(f"Private Key (SECRET): {priv_key}", language="text")
                     st.info("To vote later, you only need to provide your Name, DOB, and this Private Key.")
     else:
@@ -75,7 +75,8 @@ with tab_voter:
     if st.session_state.vote_open:
         with st.form("vote_form"):
             v_name = st.text_input("Full Name")
-            v_dob = st.date_input("Date of Birth", key="vote_dob")
+            # Fixed calendar range here as well
+            v_dob = st.date_input("Date of Birth", min_value=date(1920,1,1), max_value=date.today(), key="vote_dob")
             v_sk = st.text_input("Private Key (Secret)", type="password")
             candidate = st.selectbox("Select Candidate", st.session_state.candidates)
             
@@ -93,7 +94,6 @@ with tab_voter:
                     if voter_data['has_voted']:
                         st.warning("You have already voted.")
                     else:
-                        # Message used for signing
                         msg = f"{v_pk}-{candidate}"
                         sig = sign_transaction(v_sk, msg)
                         
@@ -159,7 +159,6 @@ with tab_host:
                 st.success("Updated")
 
         st.subheader("Voter Audit Log")
-        # Admin can see Public Keys (Voter IDs) but NOT Private Keys
         st.dataframe(st.session_state.voters_df[['name', 'dob', 'age', 'public_key', 'has_voted']], use_container_width=True)
 
 # --- 5. LEDGER ---
