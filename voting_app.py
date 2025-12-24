@@ -34,7 +34,6 @@ def save_config(config):
         json.dump(config, f)
 
 # --- INITIALIZATION & GLOBAL SYNC ---
-# We load the config at the very start of every script run for high-frequency updates
 config_data = load_config()
 
 if 'blockchain' not in st.session_state:
@@ -42,15 +41,14 @@ if 'blockchain' not in st.session_state:
     st.session_state.admin_authenticated = False
     st.session_state.config_cache = config_data
 
-# FORCE REFRESH: Reload voter database and blockchain ledger on every single run
-# This ensures the Host sees registrations and votes the instant they happen
+# FORCE REFRESH
 st.session_state.voters_df = load_voters(DB_PATH)
 st.session_state.blockchain.load_chain()
 
 st.set_page_config(layout="wide", page_title="Secure Blockchain Voting")
 
 # --- LIVE SYNC MECHANISM ---
-@st.fragment(run_every=3) # Reduced to 3 seconds for faster cross-tab response
+@st.fragment(run_every=3)
 def live_sync():
     current_config = load_config()
     if st.session_state.config_cache != current_config:
@@ -59,7 +57,6 @@ def live_sync():
 
 live_sync()
 
-# Navigation logic via query params
 query_params = st.query_params
 current_page = query_params.get("page", "voter")
 
@@ -68,6 +65,7 @@ def show_results():
     st.header("📊 Election Results")
     if config_data.get("ended"):
         results_tally = {c: 0 for c in config_data["candidates"]}
+        st.session_state.blockchain.load_chain()
         for block in st.session_state.blockchain.chain[1:]:
             for tx in block.transactions:
                 cand = tx.get('candidate')
@@ -89,7 +87,6 @@ def show_results():
 def show_ledger():
     st.header("🔗 Blockchain Ledger")
     st.info("Privacy Masking Enabled: Voter IDs are hashed using SHA-256.")
-    # Reversed to show newest blocks first
     for block in reversed(st.session_state.blockchain.chain):
         with st.expander(f"Block #{block.index} - Hash: {block.hash[:15]}..."):
             st.json(block.to_dict())
@@ -111,6 +108,9 @@ if current_page == "host":
                     st.error("Incorrect Password")
         else:
             st.success("Authenticated as Administrator")
+            
+            # Election Control Buttons
+            st.subheader("Election Lifecycle")
             c1, c2, c3 = st.columns(3)
             if c1.button("🚀 Start Voting", disabled=config_data["vote_open"] or config_data["ended"], use_container_width=True):
                 config_data["reg_open"] = False
@@ -130,8 +130,48 @@ if current_page == "host":
                 st.rerun()
 
             st.divider()
-            st.subheader("Live Voter Registry Audit")
-            # Displaying the most current data reloaded at the top of the script
+            
+            # --- CANDIDATE MANAGEMENT (STRICT VALIDATION) ---
+            st.subheader("📝 Candidate Management")
+            is_locked = config_data["vote_open"] or config_data["ended"]
+            
+            if not is_locked:
+                st.info("Enter candidates (one per line). Duplicates are automatically removed (case-insensitive).")
+                current_cands_str = "\n".join(config_data["candidates"])
+                new_cands_input = st.text_area("Candidate Registry", value=current_cands_str, height=150)
+                
+                if st.button("Save Candidate List"):
+                    # Process lines: strip whitespace and ignore empty lines
+                    lines = [line.strip() for line in new_cands_input.split("\n") if line.strip()]
+                    
+                    # Duplicate check logic (ignore case)
+                    seen = set()
+                    unique_list = []
+                    for name in lines:
+                        if name.lower() not in seen:
+                            seen.add(name.lower())
+                            unique_list.append(name)
+                    
+                    if not unique_list:
+                        st.error("Error: At least one candidate name is required.")
+                    elif len(unique_list) < len(lines):
+                        st.warning("Duplicate candidates detected and merged.")
+                        config_data["candidates"] = unique_list
+                        save_config(config_data)
+                        st.rerun()
+                    else:
+                        config_data["candidates"] = unique_list
+                        save_config(config_data)
+                        st.success("Candidate list saved successfully.")
+                        st.rerun()
+            else:
+                st.warning("⚠️ Candidate registration is LOCKED. Changes are not permitted after voting has started.")
+                st.write("**Registered Candidates:**")
+                for c in config_data["candidates"]:
+                    st.write(f"- {c}")
+
+            st.divider()
+            st.subheader("👥 Live Voter Registry Audit")
             st.dataframe(st.session_state.voters_df, width='stretch')
 
     with tab_res: show_results()
@@ -151,7 +191,7 @@ else: # Voter Portal
                 age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
                 
                 if st.form_submit_button("Register"):
-                    df = st.session_state.voters_df # Use global fresh load
+                    df = st.session_state.voters_df
                     is_duplicate = not df[(df['name'].str.lower() == name.lower()) & (df['dob'] == str(dob))].empty
                     
                     if not name:
@@ -168,7 +208,7 @@ else: # Voter Portal
                         st.warning("COPY THIS PRIVATE KEY:")
                         st.code(priv)
         else:
-            st.info("📝 Registration is closed.")
+            st.info("📝 Registration is closed. Voting phase is active.")
 
     with t_vote:
         if config_data["vote_open"]:
@@ -178,7 +218,7 @@ else: # Voter Portal
                 v_sk = st.text_input("Your Private Key", type="password")
                 choice = st.selectbox("Select Candidate", config_data["candidates"])
                 if st.form_submit_button("Cast Ballot"):
-                    df = st.session_state.voters_df # Use global fresh load
+                    df = st.session_state.voters_df
                     match = df[df['name'].str.lower() == v_name.lower()]
                     if match.empty:
                         st.error("Name not found.")
@@ -193,7 +233,6 @@ else: # Voter Portal
                             update_voter_status(df, v_pk)
                             save_voters(df, DB_PATH)
                             st.success("Vote securely recorded!")
-                            # Small sleep to ensure file write finishes before refresh
                             time.sleep(0.5)
                             st.rerun()
                         else:
@@ -201,7 +240,7 @@ else: # Voter Portal
         elif config_data["ended"]:
             st.error("🏁 The election has ended.")
         else:
-            st.info("🕒 Voting has not started yet.")
+            st.info("🕒 Voting has not started yet. Please register.")
 
     with t_res: show_results()
     with t_ledg: show_ledger()
