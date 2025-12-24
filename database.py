@@ -5,7 +5,7 @@ def load_voters(db_path):
     if os.path.exists(db_path):
         try:
             df = pd.read_csv(db_path)
-            # Private keys are NO LONGER in this file for security
+            # Ensure columns are treated as strings
             df['public_key'] = df['public_key'].astype(str)
             return df
         except:
@@ -13,7 +13,7 @@ def load_voters(db_path):
     return initialize_voters_df()
 
 def initialize_voters_df():
-    # Removed private_key from storage schema
+    # Private Key is EXCLUDED from storage for security
     return pd.DataFrame(columns=[
         'name', 'dob', 'age', 'public_key', 'has_voted'
     ])
