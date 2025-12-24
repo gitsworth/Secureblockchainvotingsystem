@@ -51,6 +51,7 @@ def show_results():
     st.header("📊 Election Results")
     if config_data["ended"]:
         results_tally = {c: 0 for c in config_data["candidates"]}
+        # Count votes from the blockchain ledger
         for block in st.session_state.blockchain.chain[1:]:
             for tx in block.transactions:
                 cand = tx.get('candidate')
@@ -71,6 +72,7 @@ def show_results():
 
 def show_ledger():
     st.header("🔗 Blockchain Ledger")
+    st.info("Notice: Voter IDs are masked using SHA-256 Hashing for privacy.")
     for block in reversed(st.session_state.blockchain.chain):
         st.json(block.to_dict())
 
@@ -119,8 +121,6 @@ if current_page == "host":
                     config_data["candidates"] = [x.strip() for x in c_text.split("\n") if x.strip()]
                     save_config(config_data)
                     st.success("Candidates Saved!")
-            else:
-                st.info("Candidates cannot be modified during or after the election.")
 
             st.subheader("Voter Audit Log")
             st.dataframe(st.session_state.voters_df[['name', 'dob', 'age', 'public_key', 'has_voted']], use_container_width=True)
@@ -154,7 +154,7 @@ else: # Voter Portal
                         save_voters(st.session_state.voters_df, DB_PATH)
                         st.success("Registered Successfully!")
                         st.code(f"Private Key (SECRET): {priv}", language="text")
-                        st.warning("Copy this key! It is not stored anywhere else.")
+                        st.warning("Copy this key! It is not stored in our database.")
         else:
             st.info("Registration is currently closed.")
 
@@ -178,11 +178,12 @@ else: # Voter Portal
                             msg = f"{v_pk}-{candidate}"
                             sig = sign_transaction(v_sk, msg)
                             if sig and verify_signature(v_pk, msg, sig):
+                                # The Blockchain object will mask the voter_id automatically
                                 st.session_state.blockchain.new_transaction(v_pk, candidate)
                                 st.session_state.blockchain.mine_block()
                                 update_voter_status(st.session_state.voters_df, v_pk)
                                 save_voters(st.session_state.voters_df, DB_PATH)
-                                st.success("Vote Recorded!")
+                                st.success("Vote Recorded Securely!")
                             else: st.error("Invalid Private Key.")
         else:
             st.warning("Voting is not currently open.")
