@@ -33,17 +33,24 @@ def save_config(config):
     with open(CONFIG_PATH, 'w') as f:
         json.dump(config, f)
 
-# Initialize data and blockchain
+# --- INITIALIZATION & GLOBAL SYNC ---
+# We load the config at the very start of every script run for high-frequency updates
+config_data = load_config()
+
 if 'blockchain' not in st.session_state:
-    st.session_state.voters_df = load_voters(DB_PATH)
     st.session_state.blockchain = Blockchain(BC_PATH)
     st.session_state.admin_authenticated = False
-    st.session_state.config_cache = load_config()
+    st.session_state.config_cache = config_data
+
+# FORCE REFRESH: Reload voter database and blockchain ledger on every single run
+# This ensures the Host sees registrations and votes the instant they happen
+st.session_state.voters_df = load_voters(DB_PATH)
+st.session_state.blockchain.load_chain()
 
 st.set_page_config(layout="wide", page_title="Secure Blockchain Voting")
 
 # --- LIVE SYNC MECHANISM ---
-@st.fragment(run_every=5)
+@st.fragment(run_every=3) # Reduced to 3 seconds for faster cross-tab response
 def live_sync():
     current_config = load_config()
     if st.session_state.config_cache != current_config:
@@ -51,7 +58,6 @@ def live_sync():
         st.rerun()
 
 live_sync()
-config_data = st.session_state.config_cache
 
 # Navigation logic via query params
 query_params = st.query_params
@@ -62,8 +68,6 @@ def show_results():
     st.header("📊 Election Results")
     if config_data.get("ended"):
         results_tally = {c: 0 for c in config_data["candidates"]}
-        # Always ensure the chain is fresh
-        st.session_state.blockchain.load_chain()
         for block in st.session_state.blockchain.chain[1:]:
             for tx in block.transactions:
                 cand = tx.get('candidate')
@@ -85,7 +89,7 @@ def show_results():
 def show_ledger():
     st.header("🔗 Blockchain Ledger")
     st.info("Privacy Masking Enabled: Voter IDs are hashed using SHA-256.")
-    st.session_state.blockchain.load_chain()
+    # Reversed to show newest blocks first
     for block in reversed(st.session_state.blockchain.chain):
         with st.expander(f"Block #{block.index} - Hash: {block.hash[:15]}..."):
             st.json(block.to_dict())
@@ -111,11 +115,13 @@ if current_page == "host":
             if c1.button("🚀 Start Voting", disabled=config_data["vote_open"] or config_data["ended"], use_container_width=True):
                 config_data["reg_open"] = False
                 config_data["vote_open"] = True
-                save_config(config_data); st.rerun()
+                save_config(config_data)
+                st.rerun()
             if c2.button("🛑 End Election", disabled=not config_data["vote_open"] or config_data["ended"], use_container_width=True):
                 config_data["vote_open"] = False
                 config_data["ended"] = True
-                save_config(config_data); st.rerun()
+                save_config(config_data)
+                st.rerun()
             if c3.button("♻️ Reset All Data", use_container_width=True):
                 st.session_state.blockchain.reset_chain()
                 st.session_state.voters_df = pd.DataFrame(columns=['name', 'dob', 'age', 'public_key', 'has_voted'])
@@ -124,8 +130,8 @@ if current_page == "host":
                 st.rerun()
 
             st.divider()
-            st.subheader("Registered Voters Audit")
-            st.session_state.voters_df = load_voters(DB_PATH)
+            st.subheader("Live Voter Registry Audit")
+            # Displaying the most current data reloaded at the top of the script
             st.dataframe(st.session_state.voters_df, width='stretch')
 
     with tab_res: show_results()
@@ -141,30 +147,28 @@ else: # Voter Portal
             with st.form("reg_form"):
                 name = st.text_input("Full Name")
                 dob = st.date_input("Date of Birth", min_value=date(1920,1,1), max_value=date.today())
-                
-                # Age calculation logic
                 today = date.today()
                 age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
                 
                 if st.form_submit_button("Register"):
-                    df = load_voters(DB_PATH)
+                    df = st.session_state.voters_df # Use global fresh load
                     is_duplicate = not df[(df['name'].str.lower() == name.lower()) & (df['dob'] == str(dob))].empty
                     
                     if not name:
                         st.error("Please enter your name.")
                     elif age < 18:
-                        st.error(f"Ineligible: You must be 18 years or older to vote (Current age: {age}).")
+                        st.error(f"Ineligible: Age {age}. Must be 18+.")
                     elif is_duplicate:
-                        st.warning("You are already registered in the system.")
+                        st.warning("You are already registered.")
                     else:
                         priv, pub = generate_key_pair()
                         new_voter = pd.DataFrame([{'name': name, 'dob': str(dob), 'age': age, 'public_key': pub, 'has_voted': False}])
                         save_voters(pd.concat([df, new_voter], ignore_index=True), DB_PATH)
                         st.success("Registration Successful!")
-                        st.warning("COPY THIS PRIVATE KEY: It will not be shown again!")
+                        st.warning("COPY THIS PRIVATE KEY:")
                         st.code(priv)
         else:
-            st.info("📝 Registration is closed. Voting phase is active.")
+            st.info("📝 Registration is closed.")
 
     with t_vote:
         if config_data["vote_open"]:
@@ -174,12 +178,12 @@ else: # Voter Portal
                 v_sk = st.text_input("Your Private Key", type="password")
                 choice = st.selectbox("Select Candidate", config_data["candidates"])
                 if st.form_submit_button("Cast Ballot"):
-                    df = load_voters(DB_PATH)
+                    df = st.session_state.voters_df # Use global fresh load
                     match = df[df['name'].str.lower() == v_name.lower()]
                     if match.empty:
-                        st.error("Name not found in registry.")
+                        st.error("Name not found.")
                     elif match.iloc[0]['has_voted']:
-                        st.warning("This voter has already cast a ballot.")
+                        st.warning("Already voted.")
                     else:
                         v_pk = match.iloc[0]['public_key']
                         msg = f"{v_pk}-{choice}"
@@ -188,14 +192,16 @@ else: # Voter Portal
                             st.session_state.blockchain.mine_block()
                             update_voter_status(df, v_pk)
                             save_voters(df, DB_PATH)
-                            st.success("Vote securely recorded on the blockchain!")
+                            st.success("Vote securely recorded!")
+                            # Small sleep to ensure file write finishes before refresh
+                            time.sleep(0.5)
+                            st.rerun()
                         else:
-                            st.error("Authentication failed. Check your Private Key.")
+                            st.error("Invalid Private Key.")
         elif config_data["ended"]:
             st.error("🏁 The election has ended.")
         else:
-            st.info("🕒 Voting has not started yet. Please register.")
+            st.info("🕒 Voting has not started yet.")
 
-    # Fixed the variable names here to match the Voter Portal tabs (t_res, t_ledg)
     with t_res: show_results()
     with t_ledg: show_ledger()
