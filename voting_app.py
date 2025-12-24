@@ -38,23 +38,20 @@ if 'blockchain' not in st.session_state:
     st.session_state.voters_df = load_voters(DB_PATH)
     st.session_state.blockchain = Blockchain(BC_PATH)
     st.session_state.admin_authenticated = False
-    st.session_state.last_config_check = 0
+    st.session_state.config_cache = load_config()
 
 st.set_page_config(layout="wide", page_title="Secure Blockchain Voting")
 
 # --- LIVE SYNC MECHANISM ---
-# This ensures that when the Host clicks a button, the Voter page updates within 5 seconds
 @st.fragment(run_every=5)
 def live_sync():
     current_config = load_config()
-    # If the file on disk differs from the one in memory, trigger a full rerun
-    if 'config_cache' not in st.session_state or st.session_state.config_cache != current_config:
+    if st.session_state.config_cache != current_config:
         st.session_state.config_cache = current_config
         st.rerun()
 
-# Run the sync
 live_sync()
-config_data = load_config()
+config_data = st.session_state.config_cache
 
 # Navigation logic via query params
 query_params = st.query_params
@@ -65,7 +62,6 @@ def show_results():
     st.header("📊 Election Results")
     if config_data.get("ended"):
         results_tally = {c: 0 for c in config_data["candidates"]}
-        # Count votes from blockchain (skipping genesis)
         for block in st.session_state.blockchain.chain[1:]:
             for tx in block.transactions:
                 cand = tx.get('candidate')
@@ -87,7 +83,6 @@ def show_results():
 def show_ledger():
     st.header("🔗 Blockchain Ledger")
     st.info("Privacy Masking Enabled: Voter IDs are hashed using SHA-256.")
-    # Always reload chain from file to see new blocks from other users
     st.session_state.blockchain.load_chain()
     for block in reversed(st.session_state.blockchain.chain):
         with st.expander(f"Block #{block.index} - Hash: {block.hash[:15]}..."):
@@ -111,37 +106,24 @@ if current_page == "host":
         else:
             st.success("Authenticated as Administrator")
             c1, c2, c3 = st.columns(3)
-            
-            if c1.button("🚀 Start Voting (Close Reg)", disabled=config_data["vote_open"] or config_data["ended"], use_container_width=True):
+            if c1.button("🚀 Start Voting", disabled=config_data["vote_open"] or config_data["ended"], use_container_width=True):
                 config_data["reg_open"] = False
                 config_data["vote_open"] = True
-                save_config(config_data)
-                st.rerun()
-                
+                save_config(config_data); st.rerun()
             if c2.button("🛑 End Election", disabled=not config_data["vote_open"] or config_data["ended"], use_container_width=True):
                 config_data["vote_open"] = False
                 config_data["ended"] = True
-                save_config(config_data)
-                st.rerun()
-                
+                save_config(config_data); st.rerun()
             if c3.button("♻️ Reset All Data", use_container_width=True):
                 st.session_state.blockchain.reset_chain()
                 st.session_state.voters_df = pd.DataFrame(columns=['name', 'dob', 'age', 'public_key', 'has_voted'])
                 save_voters(st.session_state.voters_df, DB_PATH)
-                save_config({"reg_open": True, "vote_open": False, "ended": False, "candidates": ["Candidate A", "Candidate B"]})
+                save_config({"reg_open": True, "vote_open": False, "ended": False, "candidates": ["A", "B"]})
                 st.rerun()
 
             st.divider()
-            st.subheader("Candidate List")
-            current_cands = "\n".join(config_data["candidates"])
-            new_cands = st.text_area("One candidate per line", value=current_cands, height=150)
-            if st.button("Update Candidates"):
-                config_data["candidates"] = [c.strip() for c in new_cands.split("\n") if c.strip()]
-                save_config(config_data)
-                st.success("Candidate list updated!")
-
             st.subheader("Registered Voters Audit")
-            st.session_state.voters_df = load_voters(DB_PATH) # Live reload voter list
+            st.session_state.voters_df = load_voters(DB_PATH)
             st.dataframe(st.session_state.voters_df, width='stretch')
 
     with tab_res: show_results()
@@ -157,16 +139,27 @@ else: # Voter Portal
             with st.form("reg_form"):
                 name = st.text_input("Full Name")
                 dob = st.date_input("Date of Birth", min_value=date(1920,1,1), max_value=date.today())
+                
+                # Age calculation logic
+                today = date.today()
+                age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                
                 if st.form_submit_button("Register"):
+                    df = load_voters(DB_PATH)
+                    is_duplicate = not df[(df['name'].str.lower() == name.lower()) & (df['dob'] == str(dob))].empty
+                    
                     if not name:
                         st.error("Please enter your name.")
+                    elif age < 18:
+                        st.error(f"Ineligible: You must be 18 years or older to vote (Current age: {age}).")
+                    elif is_duplicate:
+                        st.warning("You are already registered in the system.")
                     else:
                         priv, pub = generate_key_pair()
-                        new_voter = pd.DataFrame([{'name': name, 'dob': str(dob), 'age': 0, 'public_key': pub, 'has_voted': False}])
-                        st.session_state.voters_df = pd.concat([load_voters(DB_PATH), new_voter], ignore_index=True)
-                        save_voters(st.session_state.voters_df, DB_PATH)
-                        st.success("Registration Complete!")
-                        st.warning("IMPORTANT: Save your Private Key below. You need it to vote.")
+                        new_voter = pd.DataFrame([{'name': name, 'dob': str(dob), 'age': age, 'public_key': pub, 'has_voted': False}])
+                        save_voters(pd.concat([df, new_voter], ignore_index=True), DB_PATH)
+                        st.success("Registration Successful!")
+                        st.warning("COPY THIS PRIVATE KEY: It will not be shown again!")
                         st.code(priv)
         else:
             st.info("📝 Registration is closed. Voting phase is active.")
@@ -179,12 +172,12 @@ else: # Voter Portal
                 v_sk = st.text_input("Your Private Key", type="password")
                 choice = st.selectbox("Select Candidate", config_data["candidates"])
                 if st.form_submit_button("Cast Ballot"):
-                    df = load_voters(DB_PATH) # Reload to check latest vote status
+                    df = load_voters(DB_PATH)
                     match = df[df['name'].str.lower() == v_name.lower()]
                     if match.empty:
                         st.error("Name not found in registry.")
                     elif match.iloc[0]['has_voted']:
-                        st.warning("This ID has already cast a vote.")
+                        st.warning("This voter has already cast a ballot.")
                     else:
                         v_pk = match.iloc[0]['public_key']
                         msg = f"{v_pk}-{choice}"
@@ -195,11 +188,11 @@ else: # Voter Portal
                             save_voters(df, DB_PATH)
                             st.success("Vote securely recorded on the blockchain!")
                         else:
-                            st.error("Authentication failed. Check your name and Private Key.")
+                            st.error("Authentication failed. Check your Private Key.")
         elif config_data["ended"]:
-            st.error("🏁 The election has ended. Results are now available.")
+            st.error("🏁 The election has ended.")
         else:
-            st.info("🕒 Voting has not started yet. Please register and wait for the Host to open the polls.")
+            st.info("🕒 Voting has not started yet. Please register.")
 
-    with t_res: show_results()
-    with t_ledg: show_ledger()
+    with tab_res: show_results()
+    with tab_ledg: show_ledger()
