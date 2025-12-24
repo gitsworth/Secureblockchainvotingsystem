@@ -45,8 +45,7 @@ class Blockchain:
         self.save_chain()
 
     def new_transaction(self, voter_id, candidate):
-        # PRIVACY UPGRADE: We hash the voter_id one more time before storing
-        # This creates a "Pseudonym" so the Host cannot easily link it back to the CSV
+        # PRIVACY UPGRADE: Masking the voter_id so it cannot be linked back to the CSV easily
         masked_id = hashlib.sha256(voter_id.encode()).hexdigest()
         
         self.pending_transactions.append({
