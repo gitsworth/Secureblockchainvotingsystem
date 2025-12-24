@@ -112,13 +112,34 @@ with tab_voter:
 with tab_res:
     st.header("Election Results")
     if st.session_state.ended:
-        results = {c: 0 for c in st.session_state.candidates}
+        # Initialize results tally
+        results_tally = {c: 0 for c in st.session_state.candidates}
+        
+        # Count votes from blockchain (skipping genesis block)
         for block in st.session_state.blockchain.chain[1:]:
             for tx in block.transactions:
                 cand = tx.get('candidate')
-                if cand in results: results[cand] += 1
+                if cand in results_tally:
+                    results_tally[cand] += 1
         
-        st.bar_chart(pd.DataFrame(list(results.items()), columns=['Candidate', 'Votes']).set_index('Candidate'))
+        # Convert to DataFrame
+        results_df = pd.DataFrame(list(results_tally.items()), columns=['Candidate', 'Votes'])
+        
+        # Display Visuals
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.subheader("Vote Count Tally")
+            # Display formatted table
+            st.table(results_df.set_index('Candidate'))
+            
+            total_votes = results_df['Votes'].sum()
+            st.metric("Total Votes Cast", total_votes)
+            
+        with col2:
+            st.subheader("Visual Representation")
+            st.bar_chart(results_df.set_index('Candidate'))
+            
     else:
         st.info("Results are hidden until the Host ends the election.")
 
