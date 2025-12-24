@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import time
+import json
+import os
 from datetime import datetime, date
 from database import load_voters, save_voters, update_voter_status 
 from wallet import generate_key_pair, sign_transaction, verify_signature
@@ -9,30 +10,47 @@ from blockchain import Blockchain
 # --- CONFIGURATION ---
 DB_PATH = 'voters.csv' 
 BC_PATH = 'blockchain_data.json'
+CONFIG_PATH = 'election_config.json'
 ADMIN_PASSWORD = "admin123"
 
-# --- STATE INITIALIZATION ---
+# --- PERSISTENT STATE MANAGEMENT ---
+def load_config():
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                return json.load(f)
+        except:
+            pass
+    return {
+        "reg_open": True,
+        "vote_open": False,
+        "ended": False,
+        "candidates": ["Candidate A", "Candidate B"]
+    }
+
+def save_config(config):
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(config, f)
+
+# Initialize state
+config_data = load_config()
+
 if 'blockchain' not in st.session_state:
     st.session_state.voters_df = load_voters(DB_PATH)
     st.session_state.blockchain = Blockchain(BC_PATH)
-    st.session_state.reg_open = True
-    st.session_state.vote_open = False
-    st.session_state.ended = False
-    st.session_state.candidates = ["Candidate A", "Candidate B"]
     st.session_state.admin_authenticated = False
 
 st.set_page_config(layout="wide", page_title="Secure Blockchain Voting")
 
 # --- NAVIGATION LOGIC ---
-# Usage: Add ?page=host or ?page=voter to the URL
 query_params = st.query_params
-current_page = query_params.get("page", "voter") # Default to voter portal
+current_page = query_params.get("page", "voter")
 
 # --- SHARED FUNCTIONS ---
 def show_results():
     st.header("📊 Election Results")
-    if st.session_state.ended:
-        results_tally = {c: 0 for c in st.session_state.candidates}
+    if config_data["ended"]:
+        results_tally = {c: 0 for c in config_data["candidates"]}
         for block in st.session_state.blockchain.chain[1:]:
             for tx in block.transactions:
                 cand = tx.get('candidate')
@@ -59,7 +77,6 @@ def show_ledger():
 # --- PAGE ROUTING ---
 if current_page == "host":
     st.title("🛡️ Host Administration Portal")
-    
     tab_host, tab_res, tab_ledg = st.tabs(["⚙️ Controls", "📊 Results", "🔗 Ledger"])
     
     with tab_host:
@@ -74,25 +91,36 @@ if current_page == "host":
         else:
             st.success("Authenticated as Administrator")
             c1, c2, c3 = st.columns(3)
-            if c1.button("Start Voting (Close Registration)"):
-                st.session_state.reg_open, st.session_state.vote_open = False, True
+            
+            if c1.button("🚀 Start Voting (Close Reg)"):
+                config_data["reg_open"] = False
+                config_data["vote_open"] = True
+                save_config(config_data)
                 st.rerun()
-            if c2.button("End Election"):
-                st.session_state.vote_open, st.session_state.ended = False, True
+                
+            if c2.button("🛑 End Election"):
+                config_data["vote_open"] = False
+                config_data["ended"] = True
+                save_config(config_data)
                 st.rerun()
-            if c3.button("Reset All Data"):
+                
+            if c3.button("♻️ Reset All Data"):
                 st.session_state.blockchain.reset_chain()
                 st.session_state.voters_df = pd.DataFrame(columns=['name', 'dob', 'age', 'public_key', 'has_voted'])
                 save_voters(st.session_state.voters_df, DB_PATH)
-                st.session_state.reg_open, st.session_state.vote_open, st.session_state.ended = True, False, False
+                new_config = {"reg_open": True, "vote_open": False, "ended": False, "candidates": ["Candidate A", "Candidate B"]}
+                save_config(new_config)
                 st.rerun()
 
             st.subheader("Candidate Settings")
-            if not st.session_state.vote_open and not st.session_state.ended:
-                c_text = st.text_area("Candidates (One per line)", "\n".join(st.session_state.candidates))
+            if not config_data["vote_open"] and not config_data["ended"]:
+                c_text = st.text_area("Candidates (One per line)", "\n".join(config_data["candidates"]))
                 if st.button("Save Candidates"):
-                    st.session_state.candidates = [x.strip() for x in c_text.split("\n") if x.strip()]
-                    st.success("Updated")
+                    config_data["candidates"] = [x.strip() for x in c_text.split("\n") if x.strip()]
+                    save_config(config_data)
+                    st.success("Candidates Saved!")
+            else:
+                st.info("Candidates cannot be modified during or after the election.")
 
             st.subheader("Voter Audit Log")
             st.dataframe(st.session_state.voters_df[['name', 'dob', 'age', 'public_key', 'has_voted']], use_container_width=True)
@@ -100,16 +128,12 @@ if current_page == "host":
     with tab_res: show_results()
     with tab_ledg: show_ledger()
 
-else: # Default: Voter Portal
+else: # Voter Portal
     st.title("🗳️ Public Voter Portal")
-    
-    tab_reg, tab_voter, tab_res, tab_ledg = st.tabs([
-        "📝 Registration", "🗳️ Cast Vote", "📊 Results", "🔗 Ledger"
-    ])
+    tab_reg, tab_voter, tab_res, tab_ledg = st.tabs(["📝 Registration", "🗳️ Cast Vote", "📊 Results", "🔗 Ledger"])
     
     with tab_reg:
-        st.header("Voter Registration")
-        if st.session_state.reg_open:
+        if config_data["reg_open"]:
             with st.form("reg_form"):
                 name = st.text_input("Full Name")
                 dob = st.date_input("Date of Birth", min_value=date(1920,1,1), max_value=date.today())
@@ -135,21 +159,21 @@ else: # Default: Voter Portal
             st.info("Registration is currently closed.")
 
     with tab_voter:
-        st.header("Cast Your Vote")
-        if st.session_state.vote_open:
+        if config_data["vote_open"]:
             with st.form("vote_form"):
                 v_name = st.text_input("Full Name")
                 v_dob = st.date_input("Date of Birth", min_value=date(1920,1,1), key="v_dob")
                 v_sk = st.text_input("Private Key", type="password")
-                candidate = st.selectbox("Candidate", st.session_state.candidates)
+                candidate = st.selectbox("Candidate", config_data["candidates"])
                 
                 if st.form_submit_button("Submit"):
                     df = st.session_state.voters_df
                     match = df[(df['name'].str.lower() == v_name.lower()) & (df['dob'] == str(v_dob))]
                     if match.empty: st.error("Voter not found.")
                     else:
-                        v_pk = match.iloc[0]['public_key']
-                        if match.iloc[0]['has_voted']: st.warning("Already voted.")
+                        voter_data = match.iloc[0]
+                        v_pk = voter_data['public_key']
+                        if voter_data['has_voted']: st.warning("Already voted.")
                         else:
                             msg = f"{v_pk}-{candidate}"
                             sig = sign_transaction(v_sk, msg)
